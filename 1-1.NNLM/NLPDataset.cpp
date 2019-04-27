@@ -1,8 +1,8 @@
+
 #include "NLPDataset.h"
 
 #include <torch/data/example.h>
 #include <torch/types.h>
-
 #include <c10/util/Exception.h>
 
 #include <cstddef>
@@ -14,48 +14,70 @@ namespace torch {
 namespace data {
 namespace datasets {
 namespace {
-constexpr uint32_t kTrainSize = 60000;
-constexpr uint32_t kTestSize = 10000;
-constexpr uint32_t kImageRows = 1;
-constexpr uint32_t kImageColumns = 2;
-constexpr uint32_t kTarget  = 7;
+constexpr uint32_t kInit = 2;
+constexpr uint32_t kLast = 1;
 
-Tensor read_images(bool train) {
-  const auto count = train ? kTrainSize : kTestSize;
-  auto tensor = torch::rand({count, 1, kImageRows, kImageColumns});
-  return tensor.to(torch::kInt64);
-}
-
-Tensor read_targets(bool train) {
-  const auto count = train ? kTrainSize : kTestSize;
-  auto tensor = torch::rand({count, kTarget});
-  return tensor.to(torch::kFloat32);
-}
 } // namespace
 
-NLP::NLP(Mode mode)
-    : images_(read_images(mode == Mode::kTrain)),
-      targets_(read_targets(mode == Mode::kTrain)) {}
+  NLP::NLP(std::vector<std::string> sentences) {
+
+  std::vector<int>           concat_sentences;
+
+  int index=0;
+  char delim = ' ';
+  std::string word;
+
+  for( auto sentence : sentences ) {
+    std::stringstream ss(sentence);
+
+    while (getline(ss, word, delim)) {
+      if (!word.empty()) {
+
+        if( words.insert(word).second ) {
+          word_index[word] = index;
+          index_word[index] = word;
+          index++;
+        }
+        concat_sentences.push_back(word_index[word]);
+      }
+    }
+  }
+
+  const auto count = sentences.size();
+  // auto tensor = torch::from_blob(concat_sentences.data(), {count, kInit + kLast});
+  auto tensor = torch::empty({count, kInit + kLast}, torch::kInt);
+  std::memcpy(tensor.data_ptr(), concat_sentences.data(), tensor.numel() * sizeof(int));
+  tensor   = tensor.to(torch::kInt64);
+  input_   = tensor.slice(1, 0, kInit);
+  targets_ = tensor.slice(1, kInit, kInit + kLast);
+  targets_ = targets_.view({-1});
+}
+
+int64_t NLP::getClassNumber() {
+  return words.size();
+}
 
 Example<> NLP::get(size_t index) {
-  return {images_[index], targets_[index]};
+
+  return {input_[index], targets_[index]};
 }
 
 optional<size_t> NLP::size() const {
-  return images_.size(0);
+  return input_.size(0);
 }
 
-bool NLP::is_train() const noexcept {
-  return images_.size(0) == kTrainSize;
-}
-
-const Tensor& NLP::images() const {
-  return images_;
+const Tensor& NLP::input() const {
+  return input_;
 }
 
 const Tensor& NLP::targets() const {
   return targets_;
 }
+
+const std::string& NLP::index_to_string(int64_t index) {
+  return index_word[index];
+}
+
 
 } // namespace datasets
 } // namespace data

@@ -22,7 +22,10 @@ class TORCH_API NLP : public Dataset<NLP> {
   ///
   /// The supplied `root` path should contain the *content* of the unzipped
   /// NLP dataset, available from http://yann.lecun.com/exdb/mnist.
-  explicit NLP(Mode mode = Mode::kTrain);
+  explicit NLP(std::vector<std::string> sentences);
+
+  bool setMode(Mode mode);
+  int64_t getClassNumber();
 
   /// Returns the `Example` at the given `index`.
   Example<> get(size_t index) override;
@@ -30,17 +33,21 @@ class TORCH_API NLP : public Dataset<NLP> {
   /// Returns the size of the dataset.
   optional<size_t> size() const override;
 
-  /// Returns true if this is the training subset of NLP.
-  bool is_train() const noexcept;
-
   /// Returns all images stacked into a single tensor.
-  const Tensor& images() const;
+  const Tensor& input() const;
 
   /// Returns all targets stacked into a single tensor.
   const Tensor& targets() const;
 
+  const std::string& index_to_string(int64_t);
+  // const int64_t string_to_index(std::string&);
+
  private:
-  Tensor images_, targets_;
+  Tensor input_, targets_;
+
+  std::set<std::string>      words;
+  std::map<std::string, int> word_index;
+  std::map<int, std::string> index_word;
 };
 } // namespace datasets
 } // namespace data
