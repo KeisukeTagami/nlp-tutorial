@@ -35,7 +35,7 @@ const int64_t m = 2;
 
 struct Net : torch::nn::Module {
   Net(int64_t nClass)
-    : C(torch::nn::EmbeddingOptions(nClass,m)),
+    : C(torch::nn::EmbeddingOptions(nClass, m)),
       H(torch::rand({nStep * m, nHidden})),
       W(torch::rand({nStep * m, nClass})),
       d(torch::rand({nHidden})),

@@ -21,7 +21,7 @@ constexpr uint32_t kLast = 1;
 
   NLP::NLP(std::vector<std::string> sentences) {
 
-  std::vector<int>           concat_sentences;
+  std::vector<int64_t>           concat_sentences;
 
   int index=0;
   char delim = ' ';
@@ -45,9 +45,8 @@ constexpr uint32_t kLast = 1;
 
   const auto count = sentences.size();
   // auto tensor = torch::from_blob(concat_sentences.data(), {count, kInit + kLast});
-  auto tensor = torch::empty({count, kInit + kLast}, torch::kInt);
-  std::memcpy(tensor.data_ptr(), concat_sentences.data(), tensor.numel() * sizeof(int));
-  tensor   = tensor.to(torch::kInt64);
+  auto tensor = torch::empty({count, kInit + kLast}, torch::kInt64);
+  std::memcpy(tensor.data_ptr(), concat_sentences.data(), tensor.numel() * sizeof(int64_t));
   input_   = tensor.slice(1, 0, kInit);
   targets_ = tensor.slice(1, kInit, kInit + kLast);
   targets_ = targets_.view({-1});

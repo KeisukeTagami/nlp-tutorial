@@ -40,14 +40,13 @@ class TORCH_API NLP : public Dataset<NLP> {
   const Tensor& targets() const;
 
   const std::string& index_to_string(int64_t);
-  // const int64_t string_to_index(std::string&);
 
  private:
   Tensor input_, targets_;
 
   std::set<std::string>      words;
-  std::map<std::string, int> word_index;
-  std::map<int, std::string> index_word;
+  std::map<std::string, int64_t> word_index;
+  std::map<int64_t, std::string> index_word;
 };
 } // namespace datasets
 } // namespace data
