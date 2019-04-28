@@ -14,8 +14,6 @@ namespace torch {
 namespace data {
 namespace datasets {
 namespace {
-constexpr uint32_t kInit = 2;
-constexpr uint32_t kLast = 1;
 
 } // namespace
 
@@ -49,27 +47,28 @@ constexpr uint32_t kLast = 1;
     }
 
     for( auto idx = 1; idx < static_cast<int64_t>(word_indices.size()) - 1; idx++ ) {
-      auto index = word_indices[idx];
-      skipgram_target.push_back(index);
-      skipgram_context_before.push_back(index);
-      skipgram_context_after.push_back(index);
+      skipgram_target.push_back(word_indices[idx]);
+      skipgram_context_before.push_back(word_indices[idx-1]);
+      skipgram_context_after.push_back(word_indices[idx+1]);
     }
   }
 
   const auto count = static_cast<int64_t>(skipgram_target.size());
-  const auto contexts = { skipgram_context_before, skipgram_context_after };
 
   auto input = torch::empty({count}, torch::kInt64);
   std::memcpy(input.data_ptr(), skipgram_target.data(), input.numel() * sizeof(int64_t));
 
   auto context_before = torch::empty({count}, torch::kInt64);
-  std::memcpy(context_before.data_ptr(), skipgram_target.data(), context_before.numel() * sizeof(int64_t));
+  std::memcpy(context_before.data_ptr(), skipgram_context_before.data(), context_before.numel() * sizeof(int64_t));
 
   auto context_after = torch::empty({count}, torch::kInt64);
-  std::memcpy(context_after.data_ptr(), skipgram_target.data(), context_after.numel() * sizeof(int64_t));
+  std::memcpy(context_after.data_ptr(), skipgram_context_after.data(), context_after.numel() * sizeof(int64_t));
 
   input_ = at::cat({input, input}, 0);
   targets_ = at::cat({context_before, context_after}, 0);
+
+  std::cout << input_ << std::endl;
+  std::cout << targets_ << std::endl;
 }
 
 int64_t NLP::getClassNumber() {

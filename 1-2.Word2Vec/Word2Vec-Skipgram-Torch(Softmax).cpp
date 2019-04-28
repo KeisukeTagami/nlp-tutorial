@@ -34,7 +34,7 @@ const int64_t m = 2;
 
 struct Net : torch::nn::Module {
   Net(int64_t nClass)
-    : C(torch::nn::EmbeddingOptions(nClass, 13)),
+    : C(torch::nn::EmbeddingOptions(kTrainBatchSize, nClass)),
       W(torch::rand({nClass, nEmbedding}) * -2 + 1 ),
       WT(torch::rand({nEmbedding, nClass}) * -2 + 1  )
   {
@@ -117,7 +117,7 @@ void test(
 }
 
 auto main() -> int {
-  torch::manual_seed(3);
+  torch::manual_seed(1);
 
   torch::DeviceType device_type;
   if (torch::cuda::is_available()) {
