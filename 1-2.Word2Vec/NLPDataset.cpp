@@ -76,8 +76,8 @@ int64_t NLP::getClassNumber() {
 }
 
 Example<> NLP::get(size_t index) {
-
-  return {input_[index], targets_[index]};
+  auto eye = torch::eye(getClassNumber());
+  return {eye[input_[index]], targets_[index]};
 }
 
 optional<size_t> NLP::size() const {
