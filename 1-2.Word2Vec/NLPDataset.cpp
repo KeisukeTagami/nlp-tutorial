@@ -66,9 +66,6 @@ namespace {
 
   input_ = at::cat({input, input}, 0);
   targets_ = at::cat({context_before, context_after}, 0);
-
-  std::cout << input_ << std::endl;
-  std::cout << targets_ << std::endl;
 }
 
 int64_t NLP::getClassNumber() {
@@ -76,8 +73,8 @@ int64_t NLP::getClassNumber() {
 }
 
 Example<> NLP::get(size_t index) {
-  auto eye = torch::eye(getClassNumber());
-  return {eye[input_[index]], targets_[index]};
+  auto one_hot = torch::one_hot(input_[index], getClassNumber()).to(torch::kFloat);
+  return {one_hot, targets_[index]};
 }
 
 optional<size_t> NLP::size() const {

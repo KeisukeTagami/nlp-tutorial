@@ -1,6 +1,4 @@
-
 /********************************************
- *
  * $ mkdir build
  * $ cd build
  * $ cmake -DCMAKE_PREFIX_PATH=/path/to/libtorch ..
@@ -66,66 +64,6 @@ struct Net : torch::nn::Module {
   torch::Tensor b;
 };
 
-template <typename DataLoader>
-void train(
-    int32_t epoch,
-    Net& model,
-    torch::Device device,
-    DataLoader& data_loader,
-    torch::optim::Optimizer& optimizer,
-    size_t dataset_size) {
-
-  model.train();
-  size_t batch_idx = 0;
-  for (auto& batch : data_loader) {
-    auto data = batch.data.to(device);
-    auto targets = batch.target.to(device);
-    optimizer.zero_grad();
-    auto output = model.forward(data);
-    auto loss = torch::nll_loss(output, targets);
-    AT_ASSERT(!std::isnan(loss.template item<float>()));
-    loss.backward();
-    optimizer.step();
-
-    if (batch_idx++ % kLogInterval == 0) {
-      std::cout << std::endl;
-      std::cout << "\rTrain Epoch: " << epoch
-                << "[" << std::setfill(' ') << std::setw(5) << batch_idx * batch.data.size(0)
-                << "/" << std::setfill(' ') << std::setw(5) << dataset_size
-                << "]"
-                << " Loss: " <<  loss.template item<float>();
-    }
-  }
-}
-
-template <typename DataLoader>
-void test(
-    Net& model,
-    torch::Device device,
-    DataLoader& data_loader,
-    size_t dataset_size) {
-  torch::NoGradGuard no_grad;
-  model.eval();
-  double test_loss = 0;
-  int32_t correct = 0;
-  for (const auto& batch : data_loader) {
-    auto data = batch.data.to(device);
-    auto targets = batch.target.to(device);
-    auto output = model.forward(data);
-    test_loss += torch::nll_loss(output, targets,
-                                 /*weight=*/{},
-                                 Reduction::Sum).template item<float>();
-    auto pred = output.argmax(1);
-    correct += pred.eq(targets).sum().template item<int64_t>();
-  }
-
-  test_loss /= dataset_size;
-  std::cout << std::endl;
-  std::cout << "Test set: "
-            << "Average loss: " << std::fixed << std::setprecision(4) << test_loss
-            << " | Accuracy: "  << std::fixed << std::setprecision(3) << static_cast<double>(correct) / dataset_size;
-}
-
 auto main() -> int {
   torch::manual_seed(1);
 
@@ -142,30 +80,48 @@ auto main() -> int {
 
   std::vector<std::string>   sentences{ "i like dog", "i love coffee", "i hate milk"};
   auto dataset = torch::data::datasets::NLP(sentences);
-
   auto train_dataset = dataset.map(torch::data::transforms::Stack<>());
-  const size_t train_dataset_size = train_dataset.size().value();
-  auto train_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(std::move(train_dataset), kTrainBatchSize);
+  auto data_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(std::move(train_dataset), kTrainBatchSize);
 
-  auto test_dataset = dataset.map(torch::data::transforms::Stack<>());
-  const size_t test_dataset_size = test_dataset.size().value();
-  auto test_loader = torch::data::make_data_loader(std::move(test_dataset), kTestBatchSize);
 
   int64_t nClass = dataset.getClassNumber();
-  Net * model = new Net(nClass);
-  model->to(device);
+  Net model(nClass);
+  model.to(device);
 
-  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(0.001));
+  torch::optim::Adam optimizer(model.parameters(), torch::optim::AdamOptions(0.001));
 
+  model.train();
   for (size_t epoch = 1; epoch <= kNumberOfEpochs; ++epoch) {
-    train(epoch, *model, device, *train_loader, optimizer, train_dataset_size);
-    test(*model, device, *test_loader, test_dataset_size);
+
+    float loss_value;
+
+    for (auto& batch : *data_loader) {
+      auto data = batch.data.to(device);
+      auto targets = batch.target.to(device);
+      optimizer.zero_grad();
+      auto output = model.forward(data);
+      auto loss = torch::nll_loss(output, targets);
+      AT_ASSERT(!std::isnan(loss.template item<float>()));
+      loss.backward();
+      optimizer.step();
+
+      loss_value = loss.template item<float>();
+    }
+
+    if (epoch % kLogInterval == 0) {
+      std::cout << std::endl;
+      std::cout << "\rTrain Epoch: " << epoch
+                << "[" << std::setfill(' ') << std::setw(5) << epoch
+                << "/" << std::setfill(' ') << std::setw(5) << kNumberOfEpochs
+                << "]"
+                << " Loss: " <<  loss_value;
+    }
   }
 
-  model->eval();
+  model.eval();
   auto input = dataset.input().to(device);
   auto targets = dataset.targets();
-  auto predict = model->forward(input).argmax(1);
+  auto predict = model.forward(input).argmax(1);
   input = input.cpu();
   predict = predict.cpu();
 
@@ -182,8 +138,6 @@ auto main() -> int {
     std::cout << " [" << dataset.index_to_string(targets_accessor[i]) << "]";
     std::cout << std::endl;
   }
-
-
 }
 
 

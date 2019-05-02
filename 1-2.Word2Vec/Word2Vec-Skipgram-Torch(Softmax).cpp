@@ -1,6 +1,5 @@
 
 /********************************************
- *
  * $ mkdir build
  * $ cd build
  * $ cmake -DCMAKE_PREFIX_PATH=/path/to/libtorch ..
@@ -47,38 +46,6 @@ struct Net : torch::nn::Module {
   torch::Tensor WT;
 };
 
-template <typename DataLoader>
-void train(
-    int32_t epoch,
-    Net& model,
-    torch::Device device,
-    DataLoader& data_loader,
-    torch::optim::Optimizer& optimizer,
-    size_t dataset_size) {
-
-  model.train();
-  size_t batch_idx = 0;
-  for (auto& batch : data_loader) {
-    auto data = batch.data.to(device);
-    auto targets = batch.target.to(device);
-    optimizer.zero_grad();
-    auto output = model.forward(data);
-    auto loss = torch::nll_loss(output, targets);
-    AT_ASSERT(!std::isnan(loss.template item<float>()));
-    loss.backward();
-    optimizer.step();
-
-    if (batch_idx++ % kLogInterval == 0) {
-      std::cout << std::endl;
-      std::cout << "\rTrain Epoch: " << epoch
-                << "[" << std::setfill(' ') << std::setw(5) << batch_idx * batch.data.size(0)
-                << "/" << std::setfill(' ') << std::setw(5) << dataset_size
-                << "]"
-                << " Loss: " <<  loss.template item<float>();
-    }
-
-  }
-}
 
 auto main() -> int {
   torch::manual_seed(1);
@@ -101,21 +68,43 @@ auto main() -> int {
   auto dataset = torch::data::datasets::NLP(sentences);
 
   auto train_dataset = dataset.map(torch::data::transforms::Stack<>());
-  const size_t train_dataset_size = train_dataset.size().value();
-  auto train_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(std::move(train_dataset), kTrainBatchSize);
+  auto data_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(std::move(train_dataset), kTrainBatchSize);
 
   int64_t nClass = dataset.getClassNumber();
-  Net * model = new Net(nClass);
-  model->to(device);
+  Net model(nClass);
+  model.to(device);
 
-  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(0.001));
+  torch::optim::Adam optimizer(model.parameters(), torch::optim::AdamOptions(0.001));
 
+  model.train();
   for (size_t epoch = 1; epoch <= kNumberOfEpochs; ++epoch) {
-    train(epoch, *model, device, *train_loader, optimizer, train_dataset_size);
+
+    float loss_value;
+    for (auto& batch : *data_loader) {
+      auto data = batch.data.to(device);
+      auto targets = batch.target.to(device);
+      optimizer.zero_grad();
+      auto output = model.forward(data);
+      auto loss = torch::nll_loss(output, targets);
+      AT_ASSERT(!std::isnan(loss.template item<float>()));
+      loss.backward();
+      optimizer.step();
+
+      loss_value = loss.template item<float>();
+    }
+
+    if (epoch % kLogInterval == 0) {
+      std::cout << std::endl;
+      std::cout << "\rTrain Epoch: " << epoch
+                << "[" << std::setfill(' ') << std::setw(5) << epoch
+                << "/" << std::setfill(' ') << std::setw(5) << kNumberOfEpochs
+                << "]"
+                << " Loss: " <<  loss_value;
+    }
   }
 
-  model->eval();
-  std::vector<torch::Tensor> parameters = model->parameters();
+  model.eval();
+  std::vector<torch::Tensor> parameters = model.parameters();
   std::cout << parameters.size() << std::endl;
   if( 2 == parameters.size() ) {
     torch::Tensor W = parameters[0].cpu();
@@ -128,7 +117,6 @@ auto main() -> int {
                 << std::endl;
     }
   }
-
 }
 
 
