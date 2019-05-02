@@ -14,14 +14,14 @@ namespace torch {
 namespace data {
 namespace datasets {
 namespace {
-constexpr uint32_t kInit = 2;
-constexpr uint32_t kLast = 1;
+constexpr uint32_t kSentence = 3;
 
 } // namespace
 
-  NLP::NLP(std::vector<std::string> sentences) {
+NLP::NLP(std::vector<std::string> sentences,
+         std::vector<int64_t> labels) {
 
-  std::vector<int64_t>           concat_sentences;
+  std::vector<int64_t> concat_sentences;
 
   int index=0;
   char delim = ' ';
@@ -44,11 +44,10 @@ constexpr uint32_t kLast = 1;
   }
 
   const auto count = sentences.size();
-  // auto tensor = torch::from_blob(concat_sentences.data(), {count, kInit + kLast});
-  auto tensor = torch::empty({count, kInit + kLast}, torch::kInt64);
-  std::memcpy(tensor.data_ptr(), concat_sentences.data(), tensor.numel() * sizeof(int64_t));
-  input_   = tensor.slice(1, 0, kInit);
-  targets_ = tensor.slice(1, kInit, kInit + kLast);
+  input_ = torch::empty({count, kSentence}, torch::kInt64);
+  std::memcpy(input_.data_ptr(), concat_sentences.data(), input_.numel() * sizeof(int64_t));
+  targets_ = torch::empty({count, 1}, torch::kInt64);
+  std::memcpy(targets_.data_ptr(), labels.data(), targets_.numel() * sizeof(int64_t));
   targets_ = targets_.view({-1});
 }
 
@@ -75,6 +74,10 @@ const Tensor& NLP::targets() const {
 
 const std::string& NLP::index_to_string(int64_t index) {
   return index_word[index];
+}
+
+const int64_t NLP::string_to_index(std::string string) {
+  return word_index[string];
 }
 
 

@@ -22,7 +22,7 @@ class TORCH_API NLP : public Dataset<NLP> {
   ///
   /// The supplied `root` path should contain the *content* of the unzipped
   /// NLP dataset, available from http://yann.lecun.com/exdb/mnist.
-  explicit NLP(std::vector<std::string> sentences);
+  explicit NLP(std::vector<std::string> sentences, std::vector<int64_t> labels);
 
   bool setMode(Mode mode);
   int64_t getClassNumber();
@@ -40,6 +40,7 @@ class TORCH_API NLP : public Dataset<NLP> {
   const Tensor& targets() const;
 
   const std::string& index_to_string(int64_t);
+  const int64_t string_to_index(std::string);
 
  private:
   Tensor input_, targets_;
