@@ -94,7 +94,7 @@ auto main() -> int {
     float loss_value;
 
     for (auto& batch : *data_loader) {
-      torch::Tensor hidden(torch::zeros({1, batch_size, n_hidden}));
+      torch::Tensor hidden(torch::zeros({1, batch_size, n_hidden}).to(device));
       auto data = batch.data.to(device);
       auto targets = batch.target.to(device);
       optimizer.zero_grad();
@@ -120,11 +120,12 @@ auto main() -> int {
   model.eval();
 
   for (auto& batch : *data_loader) {
-    torch::Tensor hidden(torch::zeros({1, batch_size, n_hidden}));
+    torch::Tensor hidden(torch::zeros({1, batch_size, n_hidden}).to(device));
     auto input = batch.data.to(device);
     auto targets = batch.target.to(device);
     auto predict = model.forward(hidden, input);
     input = input.argmax(2).cpu();
+    targets = targets.cpu();
     predict = predict.argmax(1).cpu();
 
     auto input_accessor = input.accessor<int64_t,2>();

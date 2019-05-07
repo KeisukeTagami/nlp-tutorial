@@ -40,12 +40,8 @@ struct Net : torch::nn::Module {
     register_parameter("b", b);
   }
 
-  torch::Tensor forward(torch::Tensor X) {
+  torch::Tensor forward(torch::Tensor state, torch::Tensor X) {
     X = X.transpose(0, 1); // X : [n_step, batch_size, n_class]
-
-    auto hidden_state = torch::Tensor(torch::zeros({1, 1, X.sizes().vec().at(1), n_hidden})); // [num_layers(=1) * num_directions(=1), batch_size, n_hidden]
-    auto cell_state = torch::Tensor(torch::zeros({1, 1, X.sizes().vec().at(1), n_hidden})); // [num_layers(=1) * num_directions(=1), batch_size, n_hidden]
-    auto state = torch::cat({hidden_state, cell_state}, 0);
 
     auto outputs = lstm->forward(X, state).output;
     outputs = outputs[-1]; //[batch_size, num_directions(=1) * n_hidden]
@@ -96,8 +92,12 @@ auto main() -> int {
     for (auto& batch : *data_loader) {
       auto data = batch.data.to(device);
       auto targets = batch.target.to(device);
+      auto hidden_state = torch::Tensor(torch::zeros({1, 1, data.sizes().vec().at(0), n_hidden}));
+      auto cell_state = torch::Tensor(torch::zeros({1, 1, data.sizes().vec().at(0), n_hidden}));
+      auto state = torch::cat({hidden_state, cell_state}, 0).to(device);
+
       optimizer.zero_grad();
-      auto output = model.forward(data);
+      auto output = model.forward(state, data);
       auto loss = torch::nll_loss(output, targets);
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
@@ -121,8 +121,12 @@ auto main() -> int {
   for (auto& batch : *data_loader) {
     auto input = batch.data.to(device);
     auto targets = batch.target.to(device);
-    auto predict = model.forward(input);
+    auto hidden_state = torch::Tensor(torch::zeros({1, 1, input.sizes().vec().at(0), n_hidden}));
+    auto cell_state = torch::Tensor(torch::zeros({1, 1, input.sizes().vec().at(0), n_hidden}));
+    auto state = torch::cat({hidden_state, cell_state}, 0).to(device);
+    auto predict = model.forward(state, input);
     input = input.argmax(2).cpu();
+    targets = targets.cpu();
     predict = predict.argmax(1).cpu();
 
     auto input_accessor = input.accessor<int64_t,2>();
