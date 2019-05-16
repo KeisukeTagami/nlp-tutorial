@@ -148,6 +148,7 @@ auto main() -> int {
     auto o = torch::one_hot(targets[0].view({batch_size, -1}), dataset.getClassNumber()).to(torch::kFloat);
     auto t = targets[1].view({batch_size, -1});
     auto predict = model.forward(i, hidden, o);
+    predict = predict.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
     input = i.argmax(2).cpu();
     targets = t.cpu();
