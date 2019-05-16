@@ -1,3 +1,4 @@
+
 /********************************************
  * $ mkdir build
  * $ cd build
@@ -21,7 +22,7 @@ const int64_t kNumberOfEpochs = 5000;
 // After how many batches to log a new update with the loss value.
 const int64_t kLogInterval = 1000;
 
-const int64_t n_hidden = 5;
+const int64_t n_hidden = 128;
 
 std::shared_ptr<torch::nn::RNNImpl> make_rnn(int64_t input_size, int64_t hidden_size) {
   auto options = torch::nn::RNNOptions(input_size, hidden_size);
@@ -52,7 +53,7 @@ struct Net : torch::nn::Module {
     auto enc_output = enc_cell->forward(enc_input, enc_hidden);
     auto dec_output = dec_cell->forward(dec_input, enc_output.state);
     auto output = fc->forward(dec_output.output);
-    output = torch::log_softmax(output, /*dim=*/1);
+    output = torch::log_softmax(output, /*dim=*/2);
     return output;
   }
 
@@ -101,16 +102,23 @@ auto main() -> int {
     torch::Tensor loss;
 
     for (auto& batch : *data_loader) {
-      auto data = batch.data.to(device);
+      auto input = batch.data.to(device);
       auto targets = batch.target.to(device);
-      auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden}));
+      auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
+      targets = targets.transpose(0, 1);
+      auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
+      auto o = torch::one_hot(targets[0].view({batch_size, -1}), dataset.getClassNumber()).to(torch::kFloat);
+      auto t = targets[1].view({batch_size, -1});
 
       optimizer.zero_grad();
-      auto output = model.forward(data, hidden, targets[0]);
+      auto output = model.forward(i, hidden, o);
       output = output.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
       for( int i = 0 ; i < batch_size; i++ )
-        loss += torch::nll_loss(output[i], targets[i]);
+        if( loss.defined() )
+          loss += torch::nll_loss(output[i], t[i]);
+        else
+          loss = torch::nll_loss(output[i], t[i]);
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
       optimizer.step();
@@ -131,17 +139,23 @@ auto main() -> int {
   model.eval();
 
   for (auto& batch : *data_loader) {
+
     auto input = batch.data.to(device);
     auto targets = batch.target.to(device);
-    auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden}));
-    auto predict = model.forward(input, hidden, targets[0]);
-    input = input.argmax(2).cpu();
-    targets = targets.cpu();
-    predict = predict.argmax(1).cpu();
+    auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
+    targets = targets.transpose(0, 1);
+    auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
+    auto o = torch::one_hot(targets[0].view({batch_size, -1}), dataset.getClassNumber()).to(torch::kFloat);
+    auto t = targets[1].view({batch_size, -1});
+    auto predict = model.forward(i, hidden, o);
+
+    input = i.argmax(2).cpu();
+    targets = t.cpu();
+    predict = predict.argmax(2).cpu();
 
     auto input_accessor = input.accessor<int64_t,2>();
-    auto targets_accessor = targets.accessor<int64_t,1>();
-    auto predict_accessor = predict.accessor<int64_t,1>();
+    auto targets_accessor = targets.accessor<int64_t,2>();
+    auto predict_accessor = predict.accessor<int64_t,2>();
 
     std::cout << std::endl;
     for(int i = 0; i < input_accessor.size(0); i++) {
@@ -149,9 +163,18 @@ auto main() -> int {
         std::cout << dataset.index_to_string(input_accessor[i][j]);
       }
       std::cout << " ";
-      std::cout << dataset.index_to_string(predict_accessor[i]);
-      std::cout << " [" << dataset.index_to_string(targets_accessor[i]) << "]";
+      for(int j = 0; j < predict_accessor.size(1); j++) {
+        std::cout << dataset.index_to_string(predict_accessor[i][j]);
+      }
+
+      std::cout << " [";
+      for(int j = 0; j < targets_accessor.size(1); j++) {
+        std::cout << dataset.index_to_string(targets_accessor[i][j]);
+      }
+      std::cout << "]";
+
       std::cout << std::endl;
+
     }
   }
 }

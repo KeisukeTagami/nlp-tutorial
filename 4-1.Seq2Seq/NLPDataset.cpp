@@ -77,13 +77,13 @@ constexpr uint32_t kLast = 1;
 
   const uint64_t count = data_seq.size();
   torch::Tensor input = torch::empty({count, input_max}, torch::kInt64);
-  torch::Tensor output = torch::empty({count, output_max}, torch::kInt64);
-  torch::Tensor target = torch::empty({count, output_max}, torch::kInt64);
+  torch::Tensor output = torch::empty({count, 1, output_max+1}, torch::kInt64);
+  torch::Tensor target = torch::empty({count, 1, output_max+1}, torch::kInt64);
   std::memcpy(input.data_ptr(), concat_input_words.data(), input.numel() * sizeof(int64_t));
   std::memcpy(output.data_ptr(), concat_output_words.data(), output.numel() * sizeof(int64_t));
-  std::memcpy(target.data_ptr(), concat_output_words.data(), target.numel() * sizeof(int64_t));
+  std::memcpy(target.data_ptr(), concat_target_words.data(), target.numel() * sizeof(int64_t));
   input_   = input;
-  targets_ = torch::cat({output, target}, 0);
+  targets_ = torch::cat({output, target}, 1);
 }
 
 int64_t NLP::getClassNumber() {
@@ -91,8 +91,7 @@ int64_t NLP::getClassNumber() {
 }
 
 Example<> NLP::get(size_t index) {
-  auto one_hot = torch::one_hot(input_[index], getClassNumber()).to(torch::kFloat);
-  return {at::cat({one_hot, one_hot}), targets_[index]};
+  return {input_[index], targets_[index]};
 }
 
 optional<size_t> NLP::size() const {
