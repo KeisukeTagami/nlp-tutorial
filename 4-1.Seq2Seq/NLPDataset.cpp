@@ -19,7 +19,7 @@ constexpr uint32_t kLast = 1;
 
 } // namespace
 
-  NLP::NLP(std::vector<std::pair<std::string, std::string>> data_seq) {
+NLP::NLP(std::vector<std::pair<std::string, std::string>> data_seq) {
 
     std::vector<int64_t> concat_input_words;
     std::vector<int64_t> concat_output_words;
@@ -82,8 +82,8 @@ constexpr uint32_t kLast = 1;
   std::memcpy(input.data_ptr(), concat_input_words.data(), input.numel() * sizeof(int64_t));
   std::memcpy(output.data_ptr(), concat_output_words.data(), output.numel() * sizeof(int64_t));
   std::memcpy(target.data_ptr(), concat_target_words.data(), target.numel() * sizeof(int64_t));
-  input_   = input;
-  output_  = output;
+  input_   = torch::one_hot(input, getClassNumber()).to(torch::kFloat);
+  output_  = torch::one_hot(output, getClassNumber()).to(torch::kFloat);
   targets_ = target;
 }
 

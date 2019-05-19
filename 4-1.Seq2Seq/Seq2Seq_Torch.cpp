@@ -106,19 +106,16 @@ auto main() -> int {
       auto output = batch.data.second.to(device);
       auto targets = batch.target.to(device);
       auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
-      auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
-      auto o = torch::one_hot(output, dataset.getClassNumber()).to(torch::kFloat);
-      auto t = targets;
 
       optimizer.zero_grad();
-      auto predict = model.forward(i, hidden, o);
+      auto predict = model.forward(input, hidden, output);
       predict = predict.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
       for( int i = 0 ; i < batch_size; i++ )
         if( loss.defined() )
-          loss += torch::nll_loss(predict[i], t[i]);
+          loss += torch::nll_loss(predict[i], targets[i]);
         else
-          loss = torch::nll_loss(predict[i], t[i]);
+          loss = torch::nll_loss(predict[i], targets[i]);
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
       optimizer.step();
@@ -144,14 +141,11 @@ auto main() -> int {
     auto output = batch.data.second.to(device);
     auto targets = batch.target.to(device);
     auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
-    auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
-    auto o = torch::one_hot(output, dataset.getClassNumber()).to(torch::kFloat);
-    auto t = targets;
-    auto predict = model.forward(i, hidden, o);
+    auto predict = model.forward(input, hidden, output);
     predict = predict.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
-    input = i.argmax(2).cpu();
-    targets = t.cpu();
+    input = input.argmax(2).cpu();
+    targets = targets.cpu();
     predict = predict.argmax(2).cpu();
 
     auto input_accessor = input.accessor<int64_t,2>();
