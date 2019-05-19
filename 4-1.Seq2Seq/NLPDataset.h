@@ -3,6 +3,7 @@
 #include <torch/data/datasets/base.h>
 #include <torch/data/example.h>
 #include <torch/types.h>
+#include <torch/data/transforms/stack.h>
 
 #include <torch/csrc/WindowsTorchApiMacro.h>
 
@@ -11,9 +12,34 @@
 
 namespace torch {
 namespace data {
+
+/// The NLP dataset.
+typedef Example<std::pair<Tensor, Tensor>, Tensor> RNNExample;
+
+namespace transforms {
+
+template <>
+struct Stack<RNNExample>
+  : public Collation<RNNExample> {
+  RNNExample apply_batch(std::vector<RNNExample> examples) override {
+    std::vector<torch::Tensor> firsts, seconds, targets;
+    firsts.reserve(examples.size());
+    seconds.reserve(examples.size());
+    targets.reserve(examples.size());
+    for (auto& example : examples) {
+      firsts.push_back(std::move(example.data.first));
+      seconds.push_back(std::move(example.data.second));
+      targets.push_back(std::move(example.target));
+    }
+    return {{torch::stack(firsts), torch::stack(seconds)}, torch::stack(targets)};
+  }
+};
+
+}
+
 namespace datasets {
 /// The NLP dataset.
-class TORCH_API NLP : public Dataset<NLP> {
+class TORCH_API NLP : public Dataset<NLP, RNNExample> {
  public:
   /// The mode in which the dataset is loaded.
   enum class Mode { kTrain, kTest };
@@ -28,7 +54,7 @@ class TORCH_API NLP : public Dataset<NLP> {
   int64_t getClassNumber();
 
   /// Returns the `Example` at the given `index`.
-  Example<> get(size_t index) override;
+  RNNExample get(size_t index) override;
 
   /// Returns the size of the dataset.
   optional<size_t> size() const override;
@@ -36,13 +62,16 @@ class TORCH_API NLP : public Dataset<NLP> {
   /// Returns all images stacked into a single tensor.
   const Tensor& input() const;
 
+  /// Returns all images stacked into a single tensor.
+  const Tensor& output() const;
+
   /// Returns all targets stacked into a single tensor.
   const Tensor& targets() const;
 
   const std::string& index_to_string(int64_t);
 
  private:
-  Tensor input_, targets_;
+  Tensor input_, output_, targets_;
 
   std::set<std::string>          words;
   std::map<std::string, int64_t> word_index;

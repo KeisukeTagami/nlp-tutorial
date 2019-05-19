@@ -20,7 +20,7 @@
 const int64_t kNumberOfEpochs = 5000;
 
 // After how many batches to log a new update with the loss value.
-const int64_t kLogInterval = 1000;
+const int64_t kLogInterval = 100;
 
 const int64_t n_hidden = 128;
 
@@ -86,7 +86,7 @@ auto main() -> int {
   const int64_t batch_size = static_cast<int64_t>(seq_data.size());
 
   auto dataset = torch::data::datasets::NLP(seq_data);
-  auto train_dataset = dataset.map(torch::data::transforms::Stack<>());
+  auto train_dataset = dataset.map(torch::data::transforms::Stack<torch::data::RNNExample>());
   auto data_loader = torch::data::make_data_loader<torch::data::samplers::SequentialSampler>(std::move(train_dataset), batch_size);
 
  int64_t nClass = dataset.getClassNumber();
@@ -102,23 +102,23 @@ auto main() -> int {
     torch::Tensor loss;
 
     for (auto& batch : *data_loader) {
-      auto input = batch.data.to(device);
+      auto input = batch.data.first.to(device);
+      auto output = batch.data.second.to(device);
       auto targets = batch.target.to(device);
       auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
-      targets = targets.transpose(0, 1);
       auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
-      auto o = torch::one_hot(targets[0].view({batch_size, -1}), dataset.getClassNumber()).to(torch::kFloat);
-      auto t = targets[1].view({batch_size, -1});
+      auto o = torch::one_hot(output, dataset.getClassNumber()).to(torch::kFloat);
+      auto t = targets;
 
       optimizer.zero_grad();
-      auto output = model.forward(i, hidden, o);
-      output = output.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
+      auto predict = model.forward(i, hidden, o);
+      predict = predict.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
       for( int i = 0 ; i < batch_size; i++ )
         if( loss.defined() )
-          loss += torch::nll_loss(output[i], t[i]);
+          loss += torch::nll_loss(predict[i], t[i]);
         else
-          loss = torch::nll_loss(output[i], t[i]);
+          loss = torch::nll_loss(predict[i], t[i]);
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
       optimizer.step();
@@ -140,13 +140,13 @@ auto main() -> int {
 
   for (auto& batch : *data_loader) {
 
-    auto input = batch.data.to(device);
+    auto input = batch.data.first.to(device);
+    auto output = batch.data.second.to(device);
     auto targets = batch.target.to(device);
     auto hidden = torch::Tensor(torch::zeros({1, batch_size, n_hidden})).to(device);
-    targets = targets.transpose(0, 1);
     auto i = torch::one_hot(input, dataset.getClassNumber()).to(torch::kFloat);
-    auto o = torch::one_hot(targets[0].view({batch_size, -1}), dataset.getClassNumber()).to(torch::kFloat);
-    auto t = targets[1].view({batch_size, -1});
+    auto o = torch::one_hot(output, dataset.getClassNumber()).to(torch::kFloat);
+    auto t = targets;
     auto predict = model.forward(i, hidden, o);
     predict = predict.transpose(0, 1); // [batch_size, max_len+1(=6), num_directions(=1) * n_hidden]
 
