@@ -18,7 +18,7 @@
 #include "NLPDataset.h"
 
 // The number of epochs to train.
-const int64_t kNumberOfEpochs = 50;
+const int64_t kNumberOfEpochs = 100;
 
 // After how many batches to log a new update with the loss value.
 const int64_t kLogInterval = 10;
@@ -59,25 +59,24 @@ struct Net : torch::nn::Module {
     auto enc_outputs = outputs.output;
     hidden = outputs.state;
 
-
     std::vector<torch::Tensor> trained_attn;
     auto n_step = dec_inputs.sizes().vec().at(0);
     auto batch_size = dec_inputs.sizes().vec().at(1);
     auto model = torch::empty({n_step, batch_size, n_class}).to(device);
 
     for( int i=0 ; i < n_step; i++ ) { //  each time step
-      // dec_output : [n_step(=1), batch_size(=1), num_directions(=1) * n_hidden]
-      // hidden : [num_layers(=1) * num_directions(=1), batch_size(=1), n_hidden]
+      // dec_output : [n_step(=1), batch_size, num_directions(=1) * n_hidden]
+      // hidden : [num_layers(=1) * num_directions(=1), batch_size, n_hidden]
       outputs = dec_cell->forward(dec_inputs[i].unsqueeze(0), hidden);
       auto dec_output = outputs.output;
       hidden = outputs.state;
 
-      auto attn_weights = get_att_weight(dec_output, enc_outputs); // attn_weights : [1, 1, n_step]
+      auto attn_weights = get_att_weight(dec_output, enc_outputs); // attn_weights : [batch_size, 1, n_step]
       trained_attn.push_back(attn_weights.squeeze());
 
       // matrix-matrix product of matrices [batch_size, 1, n_step] x [batch_size, n_step, n_hidden] = [1,1,n_hidden]
       auto context = attn_weights.bmm(enc_outputs.transpose(0, 1));
-      dec_output = dec_output.squeeze(0); // dec_output : [batch_size(=1), num_directions(=1) * n_hidden]
+      dec_output = dec_output.squeeze(0); // dec_output : [batch_size, num_directions(=1) * n_hidden]
       context = context.squeeze(1);  // [1, num_directions(=1) * n_hidden]
       model[i] = out->forward(torch::cat({dec_output, context}, 1));
     }
@@ -90,25 +89,28 @@ struct Net : torch::nn::Module {
 
   }
 
-
   // get attention weight one 'dec_output' with 'enc_outputs'
   torch::Tensor get_att_weight(torch::Tensor dec_output, torch::Tensor enc_outputs) {
     auto n_step = enc_outputs.sizes().vec().at(0);
     auto batch_size = enc_outputs.sizes().vec().at(1);
-    auto attn_scores = torch::zeros({n_step}).to(device);  // attn_scores : [n_step]
+    auto attn_scores = torch::zeros({n_step, batch_size}).to(device);  // attn_scores : [n_step]
 
     for( int i = 0 ; i < n_step; i++ ) {
       attn_scores[i] = get_att_score(dec_output, enc_outputs[i]);
     }
 
     // Normalize scores to weights in range 0 to 1
-    return at::softmax(attn_scores, 0).view({1, 1, -1}).repeat({batch_size, 1, 1});
+    return at::softmax(attn_scores, 0).transpose(0,1).unsqueeze(1);
   }
 
   torch::Tensor get_att_score(torch::Tensor dec_output, torch::Tensor enc_output) {
     // enc_outputs [batch_size, num_directions(=1) * n_hidden]
+    auto batch_size = enc_output.sizes().vec().at(0);
     auto score = attn->forward(enc_output); // score : [batch_size, n_hidden]
-    return torch::dot(dec_output.view({-1}), score.view({-1}));  // inner product make scalar value
+    // return torch::bdot(dec_output.view({batch_size, -1}), score.view({batch_size, -1}));  // inner product make scalar value
+    auto a = dec_output.view({batch_size, -1}).unsqueeze(1);
+    auto b = score.view({batch_size, -1}).unsqueeze(2);
+    return a.bmm(b).squeeze();  // inner product make scalar value
   }
 
   int64_t n_class;
@@ -138,7 +140,7 @@ auto main() -> int {
                {"du liebst ein bier", "you love a beer"}
    };
 
-  const int64_t batch_size = 1; //static_cast<int64_t>(sentences.size());
+  const int64_t batch_size = static_cast<int64_t>(sentences.size());
 
   auto dataset = torch::data::datasets::NLP(sentences);
   auto train_dataset = dataset.map(torch::data::transforms::Stack<torch::data::RNNExample>());
@@ -196,7 +198,7 @@ auto main() -> int {
 
     auto input = batch.data.first.to(device);
     auto output = batch.data.second.to(device);
-    auto batch_size = output.sizes().vec().at(1);
+    auto batch_size = output.sizes().vec().at(0);
     auto n_step = output.sizes().vec().at(1);
     std::vector<std::string> output_sentences;
     for( int b = 0 ; b < batch_size ; b++ ) {
