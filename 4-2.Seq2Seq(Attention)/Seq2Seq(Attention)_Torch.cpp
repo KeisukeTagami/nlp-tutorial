@@ -72,10 +72,10 @@ struct Net : torch::nn::Module {
       hidden = outputs.state;
 
       auto attn_weights = get_att_weight(dec_output, enc_outputs); // attn_weights : [batch_size, 1, n_step]
-      trained_attn.push_back(attn_weights.squeeze());
+      trained_attn.push_back(attn_weights);
 
       // matrix-matrix product of matrices [batch_size, 1, n_step] x [batch_size, n_step, n_hidden] = [1,1,n_hidden]
-      auto context = attn_weights.bmm(enc_outputs.transpose(0, 1));
+      auto context = attn_weights.unsqueeze(1).bmm(enc_outputs.transpose(0, 1));
       dec_output = dec_output.squeeze(0); // dec_output : [batch_size, num_directions(=1) * n_hidden]
       context = context.squeeze(1);  // [1, num_directions(=1) * n_hidden]
       model[i] = out->forward(torch::cat({dec_output, context}, 1));
@@ -100,7 +100,7 @@ struct Net : torch::nn::Module {
     }
 
     // Normalize scores to weights in range 0 to 1
-    return at::softmax(attn_scores, 0).transpose(0,1).unsqueeze(1);
+    return at::softmax(attn_scores, 0).transpose(0,1);
   }
 
   torch::Tensor get_att_score(torch::Tensor dec_output, torch::Tensor enc_output) {
