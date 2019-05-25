@@ -47,8 +47,7 @@ NLP::NLP(std::vector<std::pair<std::string,std::string>> sentences) {
 
                       };
 
-  int64_t input_max = 0;
-  int64_t output_max = 0;
+  int64_t max_length = 0;
 
   buildIndices("P S E", [&](int64_t index){} );
   for( auto sentence : sentences ) {
@@ -56,8 +55,8 @@ NLP::NLP(std::vector<std::pair<std::string,std::string>> sentences) {
     int64_t output_length = 0;
     buildIndices(sentence.first, [&](int64_t index){ input_length++;} );
     buildIndices(sentence.second, [&](int64_t index){ output_length++; } );
-    input_max = std::max(input_max, input_length);
-    output_max = std::max(output_max, output_length);
+    max_length = std::max(max_length, input_length);
+    max_length = std::max(max_length, output_length);
   }
 
   for( auto sentence : sentences ) {
@@ -72,26 +71,27 @@ NLP::NLP(std::vector<std::pair<std::string,std::string>> sentences) {
                                           output_length++;
                                         } );
 
-    for( ; input_length < input_max ; input_length++ ) {
+    for( ; input_length < max_length ; input_length++ ) {
       concat_input_words.push_back(word_index["P"]);
     }
 
-    for( ; output_length < output_max ; output_length++ ) {
+    for( ; output_length < max_length ; output_length++ ) {
       concat_output_words.push_back(word_index["P"]);
       concat_target_words.push_back(word_index["P"]);
     }
+    concat_input_words.push_back(word_index["P"]);
     concat_target_words.push_back(word_index["E"]);
   }
 
   const int64_t count = sentences.size();
-  torch::Tensor input = torch::empty({count, input_max}, torch::kInt64);
-  torch::Tensor output = torch::empty({count, output_max+1}, torch::kInt64);
-  torch::Tensor target = torch::empty({count, output_max+1}, torch::kInt64);
+  torch::Tensor input = torch::empty({count, max_length+1}, torch::kInt64);
+  torch::Tensor output = torch::empty({count, max_length+1}, torch::kInt64);
+  torch::Tensor target = torch::empty({count, max_length+1}, torch::kInt64);
   std::memcpy(input.data_ptr(), concat_input_words.data(), input.numel() * sizeof(int64_t));
   std::memcpy(output.data_ptr(), concat_output_words.data(), output.numel() * sizeof(int64_t));
   std::memcpy(target.data_ptr(), concat_target_words.data(), target.numel() * sizeof(int64_t));
-  input_   = torch::one_hot(input, getClassNumber()).to(torch::kFloat);
-  output_  = torch::one_hot(output, getClassNumber()).to(torch::kFloat);
+  input_   = input;
+  output_  = output;
   targets_ = target;
 }
 

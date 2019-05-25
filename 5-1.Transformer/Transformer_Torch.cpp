@@ -21,13 +21,10 @@
 const int64_t kTrainBatchSize = 6;
 
 // The number of epochs to train.
-const int64_t kNumberOfEpochs = 5000;
+const int64_t kNumberOfEpochs = 20;
 
 // After how many batches to log a new update with the loss value.
-const int64_t kLogInterval = 1000;
-
-
-
+const int64_t kLogInterval = 1;
 
 // Bi-LSTM(Attention) Parameters
 const int64_t d_model  = 512;  // Embedding Size
@@ -86,7 +83,7 @@ torch::Tensor get_attn_pad_mask(torch::Tensor seq_q, torch::Tensor seq_k) {
 
 torch::Tensor get_attn_subsequent_mask(torch::Tensor seq) {
   auto attn_shape = {seq.size(0), seq.size(1), seq.size(1)};
-  auto subsequent_mask = at::triu(at::ones(attn_shape), 1);
+  auto subsequent_mask = torch::ones(attn_shape).to(torch::kFloat).triu(1);
   return subsequent_mask;
 }
 
@@ -136,7 +133,9 @@ struct MultiHeadAttention : torch::nn::Module { //
     , W_K(make_linear(d_model, d_k * n_heads))
     , W_V(make_linear(d_model, d_k * n_heads))
   {
-
+    register_module("W_Q", W_Q);
+    register_module("W_K", W_K);
+    register_module("W_V", W_V);
   }
 
   std::pair<torch::Tensor, torch::Tensor> forward(torch::Tensor Q,
@@ -158,7 +157,9 @@ struct MultiHeadAttention : torch::nn::Module { //
     torch::Tensor context, attn;
     std::tie(context, attn) = ScaledDotProductAttention(device).forward(q_s, k_s, v_s, attn_mask);
     context = context.transpose(1, 2).contiguous().view({batch_size, -1, n_heads * d_v}); // context: [batch_size x len_q x n_heads * d_v]
-    auto output = make_linear(n_heads * d_v, d_model)->forward(context);
+    auto linear = make_linear(n_heads * d_v, d_model);
+    linear->to(device);
+    auto output = linear->forward(context);
     return std::make_pair(at::layer_norm(output + residual, {d_model}), attn); // output: [batch_size x len_q x d_model]
   }
 
@@ -214,12 +215,39 @@ struct EncoderLayer : torch::nn::Module { //
   std::shared_ptr<PoswiseFeedForwardNet> pos_ffn;
 };
 
+struct DecoderLayer : torch::nn::Module { //
+  DecoderLayer(torch::Device device)
+    : device(device)
+    , dec_self_attn(std::make_shared<MultiHeadAttention>(device))
+    , dec_enc_attn(std::make_shared<MultiHeadAttention>(device))
+    , pos_ffn(std::make_shared<PoswiseFeedForwardNet>(device))
+  {
+    register_module("dec_self_attn", dec_self_attn);
+    register_module("dec_enc_attn", dec_enc_attn);
+    register_module("pos_ffn", pos_ffn);
+  }
+
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> forward(torch::Tensor dec_inputs, torch::Tensor enc_outputs, torch::Tensor dec_self_attn_mask, torch::Tensor dec_enc_attn_mask) {
+
+    torch::Tensor dec_outputs, dec_self_attn_, dec_enc_attn_;
+    std::tie(dec_outputs, dec_self_attn_) = dec_self_attn->forward(dec_inputs, dec_inputs, dec_inputs, dec_self_attn_mask);
+    std::tie(dec_outputs, dec_enc_attn_) = dec_enc_attn->forward(dec_outputs, enc_outputs, enc_outputs, dec_enc_attn_mask);
+    dec_outputs = pos_ffn->forward(dec_outputs);
+    return std::make_tuple(dec_outputs, dec_self_attn_, dec_enc_attn_);
+  }
+
+  torch::Device device;
+  std::shared_ptr<MultiHeadAttention> dec_self_attn;
+  std::shared_ptr<MultiHeadAttention> dec_enc_attn;
+  std::shared_ptr<PoswiseFeedForwardNet> pos_ffn;
+};
+
 
 struct Encoder : torch::nn::Module { //
   Encoder(int64_t src_vocab_size, torch::Device device)
     : device(device)
     , src_emb(std::make_shared<torch::nn::EmbeddingImpl>(src_vocab_size, d_model))
-    , pos_emb(make_embedding(get_sinusoid_encoding_table(src_vocab_size, d_model)))
+    , pos_emb(make_embedding(get_sinusoid_encoding_table(src_vocab_size, d_model).to(device)))
     , layers(std::make_shared<torch::nn::SequentialImpl>())
   {
     register_module("src_emb", src_emb);
@@ -234,7 +262,7 @@ struct Encoder : torch::nn::Module { //
     torch::Tensor long_tensor = torch::empty({1, 5}, torch::kInt64);
     int64_t values[] = {1,2,3,4,0};
     std::memcpy(long_tensor.data_ptr(), values, long_tensor.numel() * sizeof(int64_t));
-    long_tensor = long_tensor.to(at::kLong);
+    long_tensor = long_tensor.to(at::kLong).to(device);
 
     auto enc_outputs = src_emb->forward(enc_inputs) + pos_emb->forward(long_tensor);
     auto enc_self_attn_mask = get_attn_pad_mask(enc_inputs, enc_inputs);
@@ -259,13 +287,13 @@ struct Decoder : torch::nn::Module {
   Decoder(int64_t tgt_vocab_size, torch::Device device)
     : device(device)
     , tgt_emb(std::make_shared<torch::nn::EmbeddingImpl>(tgt_vocab_size, d_model))
-    , pos_emb(make_embedding(get_sinusoid_encoding_table(tgt_vocab_size, d_model)))
+    , pos_emb(make_embedding(get_sinusoid_encoding_table(tgt_vocab_size, d_model).to(device)))
     , layers(std::make_shared<torch::nn::SequentialImpl>())
   {
     register_module("tgt_emb", tgt_emb);
     register_module("pos_emb", pos_emb);
     for( int i = 0 ; i < n_layers ; i++ )
-      layers->push_back(std::make_shared<EncoderLayer>(device));
+      layers->push_back(std::make_shared<DecoderLayer>(device));
     register_module("layers", layers);
   }
 
@@ -274,13 +302,17 @@ struct Decoder : torch::nn::Module {
     torch::Tensor long_tensor = torch::empty({1, 5}, torch::kInt64);
     int64_t values[] = {5,1,2,3,4};
     std::memcpy(long_tensor.data_ptr(), values, long_tensor.numel() * sizeof(int64_t));
-    long_tensor = long_tensor.to(at::kLong);
-
+    long_tensor = long_tensor.to(at::kLong).to(device);
 
     auto dec_outputs = tgt_emb->forward(dec_inputs) + pos_emb->forward(long_tensor);
-    auto dec_self_attn_pad_mask = get_attn_pad_mask(dec_inputs, dec_inputs);
-    auto dec_self_attn_subsequent_mask = get_attn_subsequent_mask(dec_inputs);
-    auto dec_self_attn_mask = at::gt((dec_self_attn_pad_mask + dec_self_attn_subsequent_mask), 0);
+    auto dec_self_attn_pad_mask = get_attn_pad_mask(dec_inputs, dec_inputs).to(at::kFloat);
+    auto dec_self_attn_subsequent_mask = get_attn_subsequent_mask(dec_inputs).to(device);
+    // std::cout << dec_self_attn_pad_mask.to(at::kFloat) << std::endl;
+    // std::cout << dec_self_attn_subsequent_mask.to(at::kFloat) << std::endl;
+    // std::cout << dec_self_attn_pad_mask.dtype() << std::endl;
+    // std::cout << dec_self_attn_subsequent_mask.dtype() << std::endl;
+    // std::cout << dec_self_attn_subsequent_mask.to(at::kFloat).dtype() << std::endl;
+    auto dec_self_attn_mask = at::gt(dec_self_attn_pad_mask + dec_self_attn_subsequent_mask, 0);
 
     auto dec_enc_attn_mask = get_attn_pad_mask(dec_inputs, enc_inputs);
 
@@ -325,7 +357,9 @@ struct Transformer : torch::nn::Module {
     torch::Tensor dec_outputs, dec_self_attns, dec_enc_attns;
     std::tie(dec_outputs, dec_self_attns, dec_enc_attns) = decoder->forward(dec_inputs, enc_inputs, enc_outputs);
     auto dec_logits = projection->forward(dec_outputs); // dec_logits : [batch_size x src_vocab_size x tgt_vocab_size]
-    return std::make_tuple(dec_logits.view({-1, dec_logits.size(-1)}), enc_self_attns, dec_self_attns, dec_enc_attns);
+    dec_logits = dec_logits.view({-1, dec_logits.size(-1)});
+    dec_logits = torch::log_softmax(dec_logits, /*dim=*/1);
+    return std::make_tuple(dec_logits, enc_self_attns, dec_self_attns, dec_enc_attns);
   }
 
   torch::Device device;
@@ -348,8 +382,7 @@ auto main() -> int {
   torch::Device device(device_type);
 
   std::vector<std::pair<std::string, std::string>>
-    sentences {{"ich mochte ein bier", "i want a beer"},
-               {"du liebst ein bier", "you love a beer"}
+    sentences {{"ich mochte ein bier", "i want a beer"}
   };
 
   const int64_t batch_size = static_cast<int64_t>(sentences.size());
@@ -377,14 +410,7 @@ auto main() -> int {
     torch::Tensor predict;
     std::tie(predict, std::ignore, std::ignore, std::ignore) = model.forward(input, output);
 
-      torch::Tensor loss;
-      for( int i = 0 ; i < batch_size; i++ ) {
-        if( loss.defined() )
-          loss += torch::nll_loss(predict[i], targets[i]);
-        else
-          loss = torch::nll_loss(predict[i], targets[i]);
-      }
-
+    torch::Tensor loss = torch::nll_loss(predict, targets.view({-1}));
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
       optimizer.step();
@@ -409,24 +435,13 @@ auto main() -> int {
     auto input = batch.data.first.to(device);
     auto output = batch.data.second.to(device);
     auto batch_size = output.sizes().vec().at(0);
-    auto n_step = output.sizes().vec().at(1);
-    std::vector<std::string> output_sentences;
-    for( int b = 0 ; b < batch_size ; b++ ) {
-
-      std::string sentence = "S";
-      for( int s = 1 ; s < n_step; s++ ) {
-        sentence += " P";
-      }
-      output_sentences.push_back(sentence);
-    }
-    output = dataset.strings_to_tensor(output_sentences).to(device);;
     auto targets = batch.target.to(device);
     torch::Tensor predict;
     std::tie(predict, std::ignore, std::ignore, std::ignore) = model.forward(input, output);
 
-    input = input.argmax(2).cpu();
+    input = input.cpu();
     targets = targets.cpu();
-    predict = predict.argmax(2).cpu();
+    predict = predict.argmax(1).cpu().unsqueeze(0);
 
     auto input_accessor = input.accessor<int64_t,2>();
     auto targets_accessor = targets.accessor<int64_t,2>();
