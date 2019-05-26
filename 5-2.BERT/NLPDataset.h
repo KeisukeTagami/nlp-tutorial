@@ -14,24 +14,28 @@ namespace torch {
 namespace data {
 
 /// The NLP dataset.
-typedef Example<std::pair<Tensor, Tensor>, Tensor> RNNExample;
+  typedef Example<std::tuple<Tensor, Tensor, Tensor, Tensor>, Tensor> BERTExample;
 
 namespace transforms {
 
 template <>
-struct Stack<RNNExample>
-  : public Collation<RNNExample> {
-  RNNExample apply_batch(std::vector<RNNExample> examples) override {
-    std::vector<torch::Tensor> firsts, seconds, targets;
-    firsts.reserve(examples.size());
-    seconds.reserve(examples.size());
-    targets.reserve(examples.size());
+struct Stack<BERTExample>
+  : public Collation<BERTExample> {
+  BERTExample apply_batch(std::vector<BERTExample> examples) override {
+    std::vector<torch::Tensor> input_ids, segment_ids, masked_tokens, masked_pos, isNext;
+    input_ids.reserve(examples.size());
+    segment_ids.reserve(examples.size());
+    masked_tokens.reserve(examples.size());
+    masked_pos.reserve(examples.size());
+    isNext.reserve(examples.size());
     for (auto& example : examples) {
-      firsts.push_back(std::move(example.data.first));
-      seconds.push_back(std::move(example.data.second));
-      targets.push_back(std::move(example.target));
+      input_ids.push_back(std::move(std::get<0>(example.data)));
+      segment_ids.push_back(std::move(std::get<1>(example.data)));
+      masked_tokens.push_back(std::move(std::get<2>(example.data)));
+      masked_pos.push_back(std::move(std::get<3>(example.data)));
+      isNext.push_back(std::move(example.target));
     }
-    return {{torch::stack(firsts), torch::stack(seconds)}, torch::stack(targets)};
+    return {{torch::stack(input_ids), torch::stack(segment_ids), torch::stack(masked_tokens), torch::stack(masked_pos)}, torch::stack(isNext)};
   }
 };
 
@@ -39,43 +43,24 @@ struct Stack<RNNExample>
 
 namespace datasets {
 
-class TORCH_API NLP : public Dataset<NLP, RNNExample> {
+class TORCH_API NLP : public Dataset<NLP, BERTExample> {
 
  public:
 
-  /// The mode in which the dataset is loaded.
-  enum class Mode { kTrain, kTest };
+  explicit NLP(std::vector<std::string> seq_data);
 
-  /// Loads the NLP dataset from the `root` path.
-  ///
-  /// The supplied `root` path should contain the *content* of the unzipped
-  /// NLP dataset, available from http://yann.lecun.com/exdb/mnist.
-  explicit NLP(std::vector<std::pair<std::string, std::string>> seq_data);
-
-  bool setMode(Mode mode);
   int64_t getClassNumber();
 
   /// Returns the `Example` at the given `index`.
-  RNNExample get(size_t index) override;
+  BERTExample get(size_t index) override;
 
   /// Returns the size of the dataset.
   optional<size_t> size() const override;
 
-  /// Returns all images stacked into a single tensor.
-  const Tensor& input() const;
-
-  /// Returns all images stacked into a single tensor.
-  const Tensor& output() const;
-
-  /// Returns all targets stacked into a single tensor.
-  const Tensor& targets() const;
-
   const std::string& index_to_string(int64_t);
 
-  Tensor strings_to_tensor(std::vector<std::string> sentences);
-
  private:
-  Tensor input_, output_, targets_;
+  Tensor input_ids_, segment_ids_, masked_tokens_, masked_pos_, isNext_;
 
   std::set<std::string>          words;
   std::map<std::string, int64_t> word_index;
@@ -84,3 +69,4 @@ class TORCH_API NLP : public Dataset<NLP, RNNExample> {
 } // namespace datasets
 } // namespace data
 } // namespace torch
+

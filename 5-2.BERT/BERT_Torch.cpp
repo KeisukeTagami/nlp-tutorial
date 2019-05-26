@@ -1,4 +1,5 @@
 
+
 /********************************************
  *
  * $ midair build
@@ -21,15 +22,14 @@
 const int64_t kTrainBatchSize = 6;
 
 // The number of epochs to train.
-const int64_t kNumberOfEpochs = 20;
+const int64_t kNumberOfEpochs = 100;
 
 // After how many batches to log a new update with the loss value.
-const int64_t kLogInterval = 1;
+const int64_t kLogInterval = 10;
 
 
 // BERT Parameters
 const int64_t maxlen = 30;
-const int64_t batch_size = 6;
 const int64_t max_pred = 5; // max tokens of prediction
 const int64_t n_layers = 6;
 const int64_t n_heads = 12;
@@ -84,12 +84,11 @@ struct Embedding : torch::nn::Module {
     register_module("tok_embed", tok_embed);
     register_module("pos_embed", pos_embed);
     register_module("seg_embed", seg_embed);
-
   }
 
   torch::Tensor forward(torch::Tensor x, torch::Tensor seg) {
     auto seq_len = x.sizes().vec().at(1);
-    auto pos = torch::arange(seq_len, torch::kLong);
+    auto pos = torch::arange(seq_len, torch::kLong).to(device);
     pos = pos.unsqueeze(0).expand_as(x); // (seq_len,) -> (batch_size, seq_len)
     auto embedding = tok_embed->forward(x) + pos_embed->forward(pos) + seg_embed->forward(seg);
     return at::layer_norm(embedding, {d_model});
@@ -215,28 +214,42 @@ struct BERT : torch::nn::Module {
 
   BERT(int64_t vocab_size, torch::Device device)
     : device(device),
-      embedding(Embedding(vocab_size, device)),
-      layers(std::make_shared<torch::nn::SequentialImpl>()),
+      embedding(std::make_shared<Embedding>(vocab_size, device)),
       fc(make_linear(d_model, d_model)),
+      layers(std::make_shared<torch::nn::SequentialImpl>()),
       linear(make_linear(d_model, d_model)),
-      classifier(make_linear(d_model, 2)),
+      classifier(make_linear(d_model, 2))
       // decoder is shared with embedding layer
-      embed_weight(embedding.tok_embed->weight),
-      n_vocab(embed_weight.sizes().vec().at(0)),
-      n_dim(embed_weight.sizes().vec().at(1)),
-      decoder(make_linear(n_dim, n_vocab, false)),
-      decoder_bias(torch::zeros(n_vocab))
+      // embed_weight(embedding->tok_embed->weight),
+      // n_vocab(embed_weight.sizes().vec().at(0)),
+      // n_dim(embed_weight.sizes().vec().at(1)),
+      // decoder(make_linear(n_dim, n_vocab, false)),
+      // decoder_bias(torch::zeros(n_vocab))
   {
+    // decoder is shared with embedding layer
+    embed_weight = embedding->tok_embed->weight;
+    n_vocab = embedding->tok_embed->weight.sizes().vec().at(0);
+    n_dim = embedding->tok_embed->weight.sizes().vec().at(1);
+    decoder = make_linear(n_dim, n_vocab, false);
+    decoder_bias = torch::zeros(n_vocab);
     for( int i = 0 ; i < n_layers ; i++ ) {
       layers->push_back(std::make_shared<EncoderLayer>(device));
     }
-    decoder->weight = embed_weight;
+    decoder->weight = embedding->tok_embed->weight;
+    register_module("embedding", embedding);
+    register_module("fc", fc);
+    register_module("linear", linear);
+    register_module("classifier", classifier);
+    register_module("decoder", decoder);
+    register_module("layers", layers);
+    register_parameter("embed_weight", embed_weight);
+    register_parameter("decoder_bias", decoder_bias);
   }
 
   std::pair<torch::Tensor, torch::Tensor> forward(torch::Tensor input_ids, torch::Tensor segment_ids, torch::Tensor masked_pos) {
 
     torch::Tensor enc_self_attn_mask;
-    auto output = embedding.forward(input_ids, segment_ids);
+    auto output = embedding->forward(input_ids, segment_ids);
     enc_self_attn_mask = get_attn_pad_mask(input_ids, input_ids);
     for( auto layer : *layers ) {
       torch::Tensor enc_self_attn;
@@ -244,7 +257,7 @@ struct BERT : torch::nn::Module {
     }
     // output : [batch_size, len, d_model], attn : [batch_size, n_heads, d_mode, d_model]
     // it will be decided by first token(CLS)
-    auto h_pooled = at::tanh(fc->forward(output[0])); // [batch_size, d_model]
+    auto h_pooled = at::tanh(fc->forward(output.slice(1,0,1).squeeze())); // [batch_size, d_model]
     auto logits_clsf = classifier->forward(h_pooled); // [batch_size, 2]
 
     auto vec = masked_pos.sizes().vec();
@@ -256,11 +269,12 @@ struct BERT : torch::nn::Module {
     auto logits_lm = decoder->forward(h_masked) + decoder_bias; //[batch_size, maxlen, n_vocab]
 
     logits_lm = torch::log_softmax(logits_lm, /*dim=*/1);
+    logits_clsf = torch::log_softmax(logits_clsf, /*dim=*/1);
     return std::make_pair(logits_lm, logits_clsf);
   }
 
   torch::Device device;
-  Embedding embedding;
+  std::shared_ptr<Embedding> embedding;
   std::shared_ptr<torch::nn::LinearImpl> fc;
   std::shared_ptr<torch::nn::LinearImpl> linear;
   std::shared_ptr<torch::nn::LinearImpl> classifier;
@@ -286,17 +300,16 @@ auto main() -> int {
   }
   torch::Device device(device_type);
 
-  std::vector<std::pair<std::string>>
-    sentences {"Hello, how are you? I am Romeo.\n",
-               "Hello, Romeo My name is Juliet. Nice to meet you.\n",
-               "Nice meet you too. How are you today?\n",
-               "Great. My baseball team won the competition.\n",
-               "Oh Congratulations, Juliet\n",
+  std::vector<std::string>
+    sentences {"Hello, how are you? I am Romeo.\n"
+               "Hello, Romeo My name is Juliet. Nice to meet you.\n"
+               "Nice meet you too. How are you today?\n"
+               "Great. My baseball team won the competition.\n"
+               "Oh Congratulations, Juliet\n"
                "Thanks you Romeo"};
 
-  const int64_t batch_size = static_cast<int64_t>(sentences.size());
   auto dataset = torch::data::datasets::NLP(sentences);
-  auto train_dataset = dataset.map(torch::data::transforms::Stack<torch::data::RNNExample>());
+  auto train_dataset = dataset.map(torch::data::transforms::Stack<torch::data::BERTExample>());
   auto data_loader = torch::data::make_data_loader<torch::data::samplers::RandomSampler>(std::move(train_dataset), kTrainBatchSize);
 
   int64_t nClass = dataset.getClassNumber();
@@ -311,15 +324,42 @@ auto main() -> int {
     float loss_value;
 
     for (auto& batch : *data_loader) {
-      auto input = batch.data.first.to(device);
-      auto output = batch.data.second.to(device);
-      auto targets = batch.target.to(device);
 
-    optimizer.zero_grad();
-    torch::Tensor predict;
-    std::tie(predict, std::ignore) = model.forward(input, output, output);
+      auto input_ids = std::get<0>(batch.data).to(device);
+      auto segment_ids = std::get<1>(batch.data).to(device);
+      auto masked_tokens = std::get<2>(batch.data).to(device);
+      auto masked_pos = std::get<3>(batch.data).to(device);
+      auto isNext = batch.target.to(device);
+      int64_t batch_size = batch.target.sizes()[0];
 
-    torch::Tensor loss = torch::nll_loss(predict, targets.view({-1}));
+      optimizer.zero_grad();
+      torch::Tensor logits_lm, logits_clsf;
+      std::tie(logits_lm, logits_clsf) = model.forward(input_ids, segment_ids, masked_pos);
+
+      // std::cout << input_ids << std::endl;
+      // std::cout << segment_ids << std::endl;
+      // std::cout << masked_pos << std::endl;
+      // std::cout << masked_tokens << std::endl;
+      // std::cout << isNext << std::endl;
+
+      torch::Tensor loss_lm; // for masked LM
+      torch::Tensor loss_clsf; // for sentence classification
+
+      for( int i = 0 ; i < batch_size; i++ ) {
+        if( loss_lm.defined() )
+          loss_lm += torch::nll_loss(logits_lm[i], masked_tokens[i]);
+        else
+          loss_lm = torch::nll_loss(logits_lm[i], masked_tokens[i]);
+
+        if( loss_clsf.defined() )
+          loss_clsf += torch::nll_loss(logits_clsf[i], isNext[i]);
+        else
+          loss_clsf = torch::nll_loss(logits_clsf[i], isNext[i]);
+      }
+      loss_lm = loss_lm.to(torch::kFloat).mean();
+
+      torch::Tensor loss = loss_lm + loss_clsf;
+
       AT_ASSERT(!std::isnan(loss.template item<float>()));
       loss.backward();
       optimizer.step();
@@ -341,16 +381,19 @@ auto main() -> int {
 
   for (auto& batch : *data_loader) {
 
-    auto input = batch.data.first.to(device);
-    auto output = batch.data.second.to(device);
-    auto batch_size = output.sizes().vec().at(0);
-    auto targets = batch.target.to(device);
-    torch::Tensor predict;
-    std::tie(predict, std::ignore) = model.forward(input, output, output);
+    auto input_ids = std::get<0>(batch.data).to(device);
+    auto segment_ids = std::get<1>(batch.data).to(device);
+    auto masked_tokens = std::get<2>(batch.data).to(device);
+    auto masked_pos = std::get<3>(batch.data).to(device);
+    auto isNext = batch.target.to(device);
+    int64_t batch_size = batch.target.sizes()[0];
 
-    input = input.cpu();
-    targets = targets.cpu();
-    predict = predict.argmax(1).cpu().unsqueeze(0);
+    torch::Tensor predict;
+    std::tie(predict, std::ignore) = model.forward(input_ids, segment_ids, masked_pos);
+
+    auto input = input_ids.cpu();
+    auto targets = segment_ids.cpu();
+    predict = predict.argmax(1).cpu();
 
     auto input_accessor = input.accessor<int64_t,2>();
     auto targets_accessor = targets.accessor<int64_t,2>();
@@ -362,18 +405,19 @@ auto main() -> int {
         std::cout << " ";
         std::cout << dataset.index_to_string(input_accessor[i][j]);
       }
-      std::cout << ".";
+      std::cout << "." << std::endl;
       for(int j = 0; j < predict_accessor.size(1); j++) {
         std::cout << " ";
         std::cout << dataset.index_to_string(predict_accessor[i][j]);
       }
 
-      std::cout << ". [";
+      std::cout << "." << std::endl;
+      std::cout << "[";
       for(int j = 0; j < targets_accessor.size(1); j++) {
         std::cout << " ";
         std::cout << dataset.index_to_string(targets_accessor[i][j]);
       }
-      std::cout << ". ]";
+      std::cout << ". ]" << std::endl;
 
       std::cout << std::endl;
 
